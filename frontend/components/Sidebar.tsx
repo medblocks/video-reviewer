@@ -378,14 +378,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         e.stopPropagation();
                         handleToggleStatus(ann);
                       }}
-                      className={`p-1 rounded transition-colors ${
+                      className={`flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-full font-medium border transition-colors ${
                         ann.status === 'completed'
-                          ? 'text-green-600 dark:text-green-400 hover:bg-green-100 dark:hover:bg-green-900/30'
-                          : 'text-zinc-400 dark:text-zinc-500 hover:bg-zinc-200 dark:hover:bg-zinc-700'
+                          ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 border-green-200 dark:border-green-500/30 hover:bg-green-200 dark:hover:bg-green-900/50'
+                          : 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-500/30 hover:bg-amber-200 dark:hover:bg-amber-900/50'
                       }`}
                       title={ann.status === 'completed' ? 'Mark as pending' : 'Mark as completed'}
                     >
-                      {ann.status === 'completed' ? <CheckCircle2 className="w-3.5 h-3.5" /> : <Circle className="w-3.5 h-3.5" />}
+                      {ann.status === 'completed' ? <CheckCircle2 className="w-3 h-3" /> : <Circle className="w-3 h-3" />}
+                      <span>{ann.status === 'completed' ? 'Done' : 'Pending'}</span>
                     </button>
                     <button
                       onClick={(e) => {
@@ -488,14 +489,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   )}
                   
                   <div className="mt-2 text-[10px] text-zinc-400 dark:text-zinc-500 flex justify-between items-center">
-                    <div className="flex items-center gap-2">
-                      <span>{new Date(ann.createdAt).toLocaleDateString()}</span>
-                      {ann.status === 'completed' && (
-                        <span className="flex items-center gap-1 text-green-600 dark:text-green-400 font-medium">
-                          <CheckCircle2 className="w-3 h-3" /> Done
-                        </span>
-                      )}
-                    </div>
+                    <span>{new Date(ann.createdAt).toLocaleDateString()}</span>
                     <div className="flex items-center gap-2">
                       {ann.drawingData && <span className="text-emerald-500 flex items-center gap-1">Has Drawing</span>}
                       <button
