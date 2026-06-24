@@ -83,6 +83,7 @@ export async function getAnnotations(videoId: string): Promise<Annotation[]> {
       type: ann.type,
       drawingData: ann.drawing_data,
       attachments: ann.attachments || [],
+      status: ann.status,
     }));
   } catch (error) {
     console.error('Error fetching annotations:', error);
@@ -127,6 +128,7 @@ export async function saveAnnotation(annotation: Omit<Annotation, 'id' | 'create
     type: data.type,
     drawingData: data.drawing_data,
     attachments: data.attachments || [],
+    status: data.status,
   };
 }
 
@@ -142,7 +144,7 @@ export async function deleteAnnotation(id: string): Promise<void> {
 
 export async function updateAnnotation(
   id: string,
-  updates: { startTime?: number; endTime?: number; text?: string }
+  updates: { startTime?: number; endTime?: number; text?: string; status?: 'pending' | 'completed' }
 ): Promise<Annotation> {
   const response = await fetch(`${API_BASE}/annotations/${id}`, {
     method: 'PATCH',
@@ -151,6 +153,7 @@ export async function updateAnnotation(
       start_time: updates.startTime,
       end_time: updates.endTime,
       text: updates.text,
+      status: updates.status,
     }),
   });
 
@@ -172,6 +175,7 @@ export async function updateAnnotation(
     type: data.type,
     drawingData: data.drawing_data,
     attachments: data.attachments || [],
+    status: data.status,
   };
 }
 
@@ -270,5 +274,54 @@ export async function getVisualSuggestions(
 
   const data = await response.json();
   return data.suggestions;
+}
+
+// ============ Google Drive API ============
+
+// Origin the backend runs on (the OAuth popup posts its result from here).
+// API_BASE may be absolute (dev: http://localhost:3000/api) or relative
+// (prod: /api, same-origin) — resolve against the current origin either way.
+export const API_ORIGIN = new URL(API_BASE, window.location.origin).origin;
+
+// Whether this user has connected their Google Drive.
+export async function getDriveStatus(userId: string): Promise<boolean> {
+  try {
+    const response = await fetch(`${API_BASE}/drive/status?userId=${encodeURIComponent(userId)}`);
+    if (!response.ok) return false;
+    const data = await response.json();
+    return Boolean(data.connected);
+  } catch (error) {
+    console.error('Error checking Drive status:', error);
+    return false;
+  }
+}
+
+// URL to open in a popup to start the OAuth consent flow.
+export function getDriveAuthUrl(userId: string): string {
+  return `${API_BASE}/drive/auth?userId=${encodeURIComponent(userId)}`;
+}
+
+// Backend streaming-proxy URL used as the <video> src for a Drive file.
+export function getDriveStreamUrl(fileId: string, userId: string): string {
+  return `${API_BASE}/drive/stream/${encodeURIComponent(fileId)}?userId=${encodeURIComponent(userId)}`;
+}
+
+// Extract a Google Drive file ID from a pasted share link (or a bare ID).
+export function extractDriveFileId(url: string): string | null {
+  const input = url.trim();
+  if (!input) return null;
+
+  // https://drive.google.com/file/d/<ID>/view
+  const fileMatch = input.match(/\/file\/d\/([\w-]+)/);
+  if (fileMatch) return fileMatch[1];
+
+  // https://drive.google.com/open?id=<ID> or ...?id=<ID>&...
+  const idMatch = input.match(/[?&]id=([\w-]+)/);
+  if (idMatch) return idMatch[1];
+
+  // Bare file ID (no slashes, looks like a Drive ID)
+  if (/^[\w-]{20,}$/.test(input)) return input;
+
+  return null;
 }
 

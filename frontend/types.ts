@@ -29,6 +29,7 @@ export interface Annotation {
   type: 'comment' | 'drawing';
   drawingData?: DrawingPath;
   attachments: Attachment[];
+  status: 'pending' | 'completed';
 }
 
 export interface VideoMetadata {

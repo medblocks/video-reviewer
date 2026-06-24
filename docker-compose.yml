@@ -36,6 +36,12 @@ services:
       DB_NAME: frame_note
       DB_USER: postgres
       DB_PASSWORD: postgres
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+      # In production these must point at the deployed origin, not localhost
+      GOOGLE_OAUTH_REDIRECT_URI: ${GOOGLE_OAUTH_REDIRECT_URI}
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN}
     depends_on:
       postgres:
         condition: service_healthy

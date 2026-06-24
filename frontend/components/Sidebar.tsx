@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Annotation, User, Attachment } from '../types';
 import { Button } from './ui/Button';
-import { MessageSquare, Clock, PenTool, Send, Paperclip, X, File, Image as ImageIcon, Edit2, Save, Trash2, Reply, ZoomIn } from 'lucide-react';
+import { MessageSquare, Clock, PenTool, Send, Paperclip, X, File, Image as ImageIcon, Edit2, Save, Trash2, Reply, ZoomIn, RotateCw, CheckCircle2, Circle } from 'lucide-react';
 
 interface SidebarProps {
   annotations: Annotation[];
@@ -10,8 +10,9 @@ interface SidebarProps {
   currentUser: User;
   onAnnotationSelect: (annotation: Annotation) => void;
   onAddComment: (text: string, attachments: Attachment[], parentId?: string) => void;
-  onUpdateAnnotation: (id: string, updates: { startTime?: number; endTime?: number; text?: string }) => void;
+  onUpdateAnnotation: (id: string, updates: { startTime?: number; endTime?: number; text?: string; status?: 'pending' | 'completed' }) => void;
   onDeleteAnnotation: (id: string) => void;
+  onRefresh?: () => Promise<void>;
   activeAnnotationId?: string;
   isDrawingMode: boolean;
 }
@@ -24,9 +25,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onAddComment,
   onUpdateAnnotation,
   onDeleteAnnotation,
+  onRefresh,
   activeAnnotationId,
   isDrawingMode
 }) => {
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [typeFilter, setTypeFilter] = useState<'all' | 'comment' | 'attachment' | 'drawing'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'completed'>('all');
+  const [userFilter, setUserFilter] = useState<string>('all');
   const [newComment, setNewComment] = useState('');
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -89,6 +95,38 @@ export const Sidebar: React.FC<SidebarProps> = ({
     setEditStartTime('');
     setEditEndTime('');
   };
+
+  const handleRefresh = async () => {
+    if (!onRefresh || isRefreshing) return;
+    setIsRefreshing(true);
+    try {
+      await onRefresh();
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
+  const handleToggleStatus = (ann: Annotation) => {
+    onUpdateAnnotation(ann.id, { status: ann.status === 'completed' ? 'pending' : 'completed' });
+  };
+
+  // Distinct authors across all annotations (for the user filter)
+  const authorOptions = Array.from(
+    new Map<string, User>(annotations.map(a => [a.author.id, a.author])).values()
+  );
+
+  // Top-level comments after applying the active filters
+  const visibleAnnotations = annotations.filter(ann => {
+    if (ann.parentId) return false;
+    if (typeFilter === 'comment' && ann.type !== 'comment') return false;
+    if (typeFilter === 'attachment' && !(ann.attachments && ann.attachments.length > 0)) return false;
+    if (typeFilter === 'drawing' && !(ann.type === 'drawing' || ann.drawingData)) return false;
+    if (statusFilter !== 'all' && ann.status !== statusFilter) return false;
+    if (userFilter !== 'all' && ann.author.id !== userFilter) return false;
+    return true;
+  });
+  const totalTopLevel = annotations.filter(ann => !ann.parentId).length;
+  const isFiltered = typeFilter !== 'all' || statusFilter !== 'all' || userFilter !== 'all';
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -217,24 +255,71 @@ export const Sidebar: React.FC<SidebarProps> = ({
       
       {/* Header */}
       <div className="p-4 border-b border-zinc-200 dark:border-zinc-800 bg-white/50 dark:bg-zinc-900/50 backdrop-blur-md sticky top-0 z-20">
-        <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100 uppercase tracking-wider flex items-center gap-2">
-          <MessageSquare className="w-4 h-4 text-purple-600 dark:text-purple-500" />
-          Comments
-        </h2>
-        <div className="text-xs text-zinc-500 mt-1">
-          {annotations.length} items
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100 uppercase tracking-wider flex items-center gap-2">
+            <MessageSquare className="w-4 h-4 text-purple-600 dark:text-purple-500" />
+            Comments
+          </h2>
+          {onRefresh && (
+            <button
+              onClick={handleRefresh}
+              disabled={isRefreshing}
+              className="p-1 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-500 dark:text-zinc-400 disabled:opacity-50 transition-colors"
+              title="Refresh comments"
+            >
+              <RotateCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+            </button>
+          )}
+        </div>
+        {/* Filters */}
+        <div className="flex flex-wrap gap-2 mt-3">
+          <select
+            value={typeFilter}
+            onChange={(e) => setTypeFilter(e.target.value as typeof typeFilter)}
+            className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-md px-2 py-1 text-xs text-zinc-700 dark:text-zinc-300 focus:outline-none focus:ring-2 focus:ring-purple-600"
+            title="Filter by type"
+          >
+            <option value="all">All types</option>
+            <option value="comment">Comments</option>
+            <option value="attachment">Has attachment</option>
+            <option value="drawing">Has drawing</option>
+          </select>
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}
+            className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-md px-2 py-1 text-xs text-zinc-700 dark:text-zinc-300 focus:outline-none focus:ring-2 focus:ring-purple-600"
+            title="Filter by status"
+          >
+            <option value="all">All status</option>
+            <option value="pending">Pending</option>
+            <option value="completed">Completed</option>
+          </select>
+          <select
+            value={userFilter}
+            onChange={(e) => setUserFilter(e.target.value)}
+            className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-md px-2 py-1 text-xs text-zinc-700 dark:text-zinc-300 focus:outline-none focus:ring-2 focus:ring-purple-600"
+            title="Filter by author"
+          >
+            <option value="all">All authors</option>
+            {authorOptions.map(author => (
+              <option key={author.id} value={author.id}>{author.name}</option>
+            ))}
+          </select>
+        </div>
+        <div className="text-xs text-zinc-500 mt-2">
+          {isFiltered ? `${visibleAnnotations.length} of ${totalTopLevel} items` : `${totalTopLevel} items`}
         </div>
       </div>
 
       {/* List */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {annotations.length === 0 ? (
+        {visibleAnnotations.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-48 text-zinc-400 dark:text-zinc-600 text-center">
             <MessageSquare className="w-12 h-12 mb-2 opacity-20" />
-            <p className="text-sm">No comments yet.</p>
+            <p className="text-sm">{isFiltered ? 'No comments match the filters.' : 'No comments yet.'}</p>
           </div>
         ) : (
-          annotations.filter(ann => !ann.parentId).map((ann) => {
+          visibleAnnotations.map((ann) => {
             const isEditing = editingId === ann.id;
             const isReplying = replyingToId === ann.id;
             const replies = annotations.filter(r => r.parentId === ann.id);
@@ -288,6 +373,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   </div>
                 ) : (
                   <div className="flex items-center gap-1">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleToggleStatus(ann);
+                      }}
+                      className={`p-1 rounded transition-colors ${
+                        ann.status === 'completed'
+                          ? 'text-green-600 dark:text-green-400 hover:bg-green-100 dark:hover:bg-green-900/30'
+                          : 'text-zinc-400 dark:text-zinc-500 hover:bg-zinc-200 dark:hover:bg-zinc-700'
+                      }`}
+                      title={ann.status === 'completed' ? 'Mark as pending' : 'Mark as completed'}
+                    >
+                      {ann.status === 'completed' ? <CheckCircle2 className="w-3.5 h-3.5" /> : <Circle className="w-3.5 h-3.5" />}
+                    </button>
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
@@ -389,7 +488,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   )}
                   
                   <div className="mt-2 text-[10px] text-zinc-400 dark:text-zinc-500 flex justify-between items-center">
-                    <span>{new Date(ann.createdAt).toLocaleDateString()}</span>
+                    <div className="flex items-center gap-2">
+                      <span>{new Date(ann.createdAt).toLocaleDateString()}</span>
+                      {ann.status === 'completed' && (
+                        <span className="flex items-center gap-1 text-green-600 dark:text-green-400 font-medium">
+                          <CheckCircle2 className="w-3 h-3" /> Done
+                        </span>
+                      )}
+                    </div>
                     <div className="flex items-center gap-2">
                       {ann.drawingData && <span className="text-emerald-500 flex items-center gap-1">Has Drawing</span>}
                       <button

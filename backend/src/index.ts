@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url';
 import usersRouter from './routes/users.js';
 import annotationsRouter from './routes/annotations.js';
 import suggestionsRouter from './routes/suggestions.js';
+import driveRouter from './routes/drive.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -22,6 +23,7 @@ app.use(express.json({ limit: '50mb' })); // Large limit for drawing data
 app.use('/api/users', usersRouter);
 app.use('/api/annotations', annotationsRouter);
 app.use('/api/suggestions', suggestionsRouter);
+app.use('/api/drive', driveRouter);
 
 // Health check
 app.get('/api/health', (req, res) => {
@@ -59,11 +61,22 @@ app.listen(PORT, () => {
   console.log(`   POST   /api/annotations/import - Import JSON`);
   console.log(`   POST   /api/suggestions     - Get AI visual suggestions`);
   
+  console.log(`   GET    /api/drive/status   - Drive connection status`);
+  console.log(`   GET    /api/drive/auth     - Start Google Drive OAuth`);
+  console.log(`   GET    /api/drive/stream/:fileId - Stream a Drive video`);
+
   // Check if Gemini API key is configured
   if (process.env.GEMINI_API_KEY) {
     console.log(`✨ Gemini AI: Enabled (API key loaded)`);
   } else {
     console.log(`⚠️  Gemini AI: Disabled (GEMINI_API_KEY not set in .env)`);
+  }
+
+  // Check if Google Drive integration is configured
+  if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
+    console.log(`📁 Google Drive: Enabled (OAuth client loaded)`);
+  } else {
+    console.log(`⚠️  Google Drive: Disabled (GOOGLE_CLIENT_ID/SECRET not set in .env)`);
   }
   
   if (isProduction) {
