@@ -1,4 +1,4 @@
-import { Annotation, User, VisualSuggestion } from '../types';
+import { Annotation, Attachment, User, VisualSuggestion } from '../types';
 
 // In production: use relative /api (same origin)
 // In development: use localhost:3001
@@ -187,6 +187,33 @@ export async function clearAnnotations(videoId: string): Promise<void> {
   if (!response.ok) {
     throw new Error('Failed to clear annotations');
   }
+}
+
+// ============ Attachment Upload API ============
+
+// Upload one base64 attachment to Directus (via the backend proxy) and get back
+// an Attachment whose `url` points at the hosted asset. The base64 is only sent
+// at comment-submit time, so pasted-then-removed images never reach Directus.
+export async function uploadAttachment(attachment: Attachment): Promise<Attachment> {
+  const response = await fetch(`${API_BASE}/upload`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ dataUrl: attachment.url, name: attachment.name }),
+  });
+
+  if (!response.ok) {
+    throw new Error('Failed to upload attachment');
+  }
+
+  return await response.json();
+}
+
+// Upload any still-local (base64 `data:`) attachments to Directus, passing
+// through any that already hold a hosted URL. Used when a comment is submitted.
+export async function uploadPendingAttachments(attachments: Attachment[]): Promise<Attachment[]> {
+  return Promise.all(
+    attachments.map(att => att.url.startsWith('data:') ? uploadAttachment(att) : Promise.resolve(att))
+  );
 }
 
 // ============ Export/Import API ============

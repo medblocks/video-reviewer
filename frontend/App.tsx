@@ -242,13 +242,13 @@ export default function App() {
   };
 
   // Handle Range Selection from Timeline
-  const handleRangeSelect = (range: { start: number; end: number } | null) => {
+  const handleRangeSelect = useCallback((range: { start: number; end: number } | null) => {
       setSelectionRange(range);
       if (range) {
           setIsPlaying(false);
           setActiveAnnotationId(null); // Deselect specific comment if creating a new range
       }
-  };
+  }, []);
 
   const handleTimeUpdate = useCallback((time: number) => {
     setCurrentTime(time);
@@ -258,29 +258,29 @@ export default function App() {
     setIsPlaying(!isPlaying);
   };
 
-  const handleSeek = (time: number) => {
+  const handleSeek = useCallback((time: number) => {
     videoPlayerRef.current?.seekTo(time);
     setCurrentTime(time);
-  };
+  }, []);
 
-  const handleToolChange = (tool: 'pointer' | 'pen') => {
+  const handleToolChange = useCallback((tool: 'pointer' | 'pen') => {
     setSelectedTool(tool);
     if (tool === 'pen') {
       setIsDrawingMode(true);
-      setIsPlaying(false); 
+      setIsPlaying(false);
       // Clear existing active drawing if we want to draw new stuff
-      setActiveAnnotationId(null); 
+      setActiveAnnotationId(null);
       videoPlayerRef.current?.clearCanvas();
     } else {
       setIsDrawingMode(false);
     }
-  };
+  }, []);
 
   const clearCurrentDrawing = () => {
       videoPlayerRef.current?.clearCanvas();
   }
 
-  const handleAddComment = async (text: string, attachments: Attachment[], parentId?: string) => {
+  const handleAddComment = useCallback(async (text: string, attachments: Attachment[], parentId?: string) => {
     if (!videoId || !currentUser) return;
 
     // Get Drawing Data from Fabric via Ref
@@ -343,7 +343,7 @@ export default function App() {
       console.error('Failed to save annotation:', error);
       alert('Failed to save annotation. Please make sure the server is running.');
     }
-  };
+  }, [videoId, currentUser, currentTime, selectionRange, duration, annotations, selectedTool, handleToolChange]);
 
   // Export annotations as JSON
   const handleExport = async () => {
@@ -395,27 +395,27 @@ export default function App() {
     }
   };
 
-  const handleAnnotationSelect = (ann: Annotation) => {
+  const handleAnnotationSelect = useCallback((ann: Annotation) => {
     setActiveAnnotationId(ann.id);
     setIsPlaying(false);
     videoPlayerRef.current?.seekTo(ann.startTime);
     setCurrentTime(ann.startTime);
     setSelectionRange({ start: ann.startTime, end: ann.endTime });
-    
+
     // If in drawing mode, exit it to view the annotation
     if (isDrawingMode) {
         setSelectedTool('pointer');
         setIsDrawingMode(false);
     }
-  };
+  }, [isDrawingMode]);
 
-  const handleUpdateAnnotation = async (id: string, updates: { startTime?: number; endTime?: number; text?: string; status?: 'pending' | 'completed' }) => {
+  const handleUpdateAnnotation = useCallback(async (id: string, updates: { startTime?: number; endTime?: number; text?: string; status?: 'pending' | 'completed' }) => {
     try {
       const updated = await updateAnnotation(id, updates);
-      
+
       // Update the annotations list
       setAnnotations(prev => prev.map(ann => ann.id === id ? updated : ann).sort((a, b) => a.startTime - b.startTime));
-      
+
       // Update selection range if this annotation is active
       if (activeAnnotationId === id && updates.startTime !== undefined && updates.endTime !== undefined) {
         setSelectionRange({ start: updates.startTime, end: updates.endTime });
@@ -424,15 +424,15 @@ export default function App() {
       console.error('Failed to update annotation:', error);
       alert('Failed to update annotation. Please make sure the server is running.');
     }
-  };
+  }, [activeAnnotationId]);
 
-  const handleDeleteAnnotation = async (id: string) => {
+  const handleDeleteAnnotation = useCallback(async (id: string) => {
     try {
       await deleteAnnotation(id);
-      
+
       // Remove the annotation and any replies from the list
       setAnnotations(prev => prev.filter(ann => ann.id !== id && ann.parentId !== id));
-      
+
       // Clear active annotation if it was deleted
       if (activeAnnotationId === id) {
         setActiveAnnotationId(null);
@@ -442,7 +442,7 @@ export default function App() {
       console.error('Failed to delete annotation:', error);
       alert('Failed to delete annotation. Please make sure the server is running.');
     }
-  };
+  }, [activeAnnotationId]);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];

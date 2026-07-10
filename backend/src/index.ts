@@ -7,6 +7,7 @@ import usersRouter from './routes/users.js';
 import annotationsRouter from './routes/annotations.js';
 import suggestionsRouter from './routes/suggestions.js';
 import driveRouter from './routes/drive.js';
+import uploadRouter from './routes/upload.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -24,6 +25,7 @@ app.use('/api/users', usersRouter);
 app.use('/api/annotations', annotationsRouter);
 app.use('/api/suggestions', suggestionsRouter);
 app.use('/api/drive', driveRouter);
+app.use('/api/upload', uploadRouter);
 
 // Health check
 app.get('/api/health', (req, res) => {
@@ -64,6 +66,7 @@ app.listen(PORT, () => {
   console.log(`   GET    /api/drive/status   - Drive connection status`);
   console.log(`   GET    /api/drive/auth     - Start Google Drive OAuth`);
   console.log(`   GET    /api/drive/stream/:fileId - Stream a Drive video`);
+  console.log(`   POST   /api/upload         - Upload an attachment to Directus`);
 
   // Check if Gemini API key is configured
   if (process.env.GEMINI_API_KEY) {
@@ -77,6 +80,13 @@ app.listen(PORT, () => {
     console.log(`📁 Google Drive: Enabled (OAuth client loaded)`);
   } else {
     console.log(`⚠️  Google Drive: Disabled (GOOGLE_CLIENT_ID/SECRET not set in .env)`);
+  }
+
+  // Check if Directus attachment uploads are configured
+  if (process.env.DIRECTUS_URL && process.env.DIRECTUS_TOKEN && process.env.DIRECTUS_UPLOAD_FOLDER) {
+    console.log(`🖼️  Directus uploads: Enabled (${process.env.DIRECTUS_URL})`);
+  } else {
+    console.log(`⚠️  Directus uploads: Disabled (DIRECTUS_URL/TOKEN/UPLOAD_FOLDER not set in .env)`);
   }
   
   if (isProduction) {

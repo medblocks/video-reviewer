@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Annotation, User, Attachment } from '../types';
+import { uploadPendingAttachments } from '../services/api';
 import { Button } from './ui/Button';
 import { MessageSquare, Clock, PenTool, Send, Paperclip, X, File, Image as ImageIcon, Edit2, Save, Trash2, Reply, ZoomIn, RotateCw, CheckCircle2, Circle } from 'lucide-react';
 
@@ -17,7 +18,7 @@ interface SidebarProps {
   isDrawingMode: boolean;
 }
 
-export const Sidebar: React.FC<SidebarProps> = ({
+const SidebarComponent: React.FC<SidebarProps> = ({
   annotations,
   currentTime,
   selectionRange,
@@ -43,6 +44,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [replyText, setReplyText] = useState('');
   const [replyAttachments, setReplyAttachments] = useState<Attachment[]>([]);
   const [viewingImage, setViewingImage] = useState<{ url: string; name: string } | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
   const commentsEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const replyFileInputRef = useRef<HTMLInputElement>(null);
@@ -111,39 +113,79 @@ export const Sidebar: React.FC<SidebarProps> = ({
   };
 
   // Distinct authors across all annotations (for the user filter)
-  const authorOptions = Array.from(
-    new Map<string, User>(annotations.map(a => [a.author.id, a.author])).values()
+  const authorOptions = useMemo(
+    () => Array.from(new Map<string, User>(annotations.map(a => [a.author.id, a.author])).values()),
+    [annotations]
   );
 
+  // Replies grouped by parent id — built once per annotations change instead of
+  // filtering the whole list for every top-level comment (was O(n²) per render).
+  const repliesByParent = useMemo(() => {
+    const map = new Map<string, Annotation[]>();
+    for (const ann of annotations) {
+      if (!ann.parentId) continue;
+      const existing = map.get(ann.parentId);
+      if (existing) existing.push(ann);
+      else map.set(ann.parentId, [ann]);
+    }
+    return map;
+  }, [annotations]);
+
   // Top-level comments after applying the active filters
-  const visibleAnnotations = annotations.filter(ann => {
-    if (ann.parentId) return false;
-    if (typeFilter === 'comment' && ann.type !== 'comment') return false;
-    if (typeFilter === 'attachment' && !(ann.attachments && ann.attachments.length > 0)) return false;
-    if (typeFilter === 'drawing' && !(ann.type === 'drawing' || ann.drawingData)) return false;
-    if (statusFilter !== 'all' && ann.status !== statusFilter) return false;
-    if (userFilter !== 'all' && ann.author.id !== userFilter) return false;
-    return true;
-  });
-  const totalTopLevel = annotations.filter(ann => !ann.parentId).length;
+  const visibleAnnotations = useMemo(
+    () =>
+      annotations.filter(ann => {
+        if (ann.parentId) return false;
+        if (typeFilter === 'comment' && ann.type !== 'comment') return false;
+        if (typeFilter === 'attachment' && !(ann.attachments && ann.attachments.length > 0)) return false;
+        if (typeFilter === 'drawing' && !(ann.type === 'drawing' || ann.drawingData)) return false;
+        if (statusFilter !== 'all' && ann.status !== statusFilter) return false;
+        if (userFilter !== 'all' && ann.author.id !== userFilter) return false;
+        return true;
+      }),
+    [annotations, typeFilter, statusFilter, userFilter]
+  );
+  const totalTopLevel = useMemo(() => annotations.filter(ann => !ann.parentId).length, [annotations]);
   const isFiltered = typeFilter !== 'all' || statusFilter !== 'all' || userFilter !== 'all';
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newComment.trim() && attachments.length === 0) return;
-    onAddComment(newComment, attachments);
-    setNewComment('');
-    setAttachments([]);
-    // Blur the textarea to allow keyboard shortcuts to work again
-    textareaRef.current?.blur();
+    if (isUploading) return;
+    setIsUploading(true);
+    try {
+      // Upload any base64 attachments to Directus now, then save with hosted URLs.
+      const uploaded = await uploadPendingAttachments(attachments);
+      onAddComment(newComment, uploaded);
+      setNewComment('');
+      setAttachments([]);
+      // Blur the textarea to allow keyboard shortcuts to work again
+      textareaRef.current?.blur();
+    } catch (error) {
+      console.error('Failed to upload attachments:', error);
+      alert('Failed to upload attachments. Please try again.');
+    } finally {
+      setIsUploading(false);
+    }
   };
 
-  const handleReplySubmit = (parentId: string) => {
+  const handleReplySubmit = async (parentId: string) => {
     if (!replyText.trim() && replyAttachments.length === 0) return;
-    onAddComment(replyText, replyAttachments, parentId);
-    setReplyText('');
-    setReplyAttachments([]);
-    setReplyingToId(null);
+    if (isUploading) return;
+    setIsUploading(true);
+    try {
+      const uploaded = await uploadPendingAttachments(replyAttachments);
+      onAddComment(replyText, uploaded, parentId);
+      setReplyText('');
+      setReplyAttachments([]);
+      setReplyingToId(null);
+    } catch (error) {
+      console.error('Failed to upload attachments:', error);
+      alert('Failed to upload attachments. Please try again.');
+      return;
+    } finally {
+      setIsUploading(false);
+    }
   };
 
   const handleDelete = (id: string, hasReplies: boolean) => {
@@ -156,47 +198,34 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
   };
 
+  // Turn a File into a local Attachment holding a base64 data URL. The actual
+  // upload to Directus is deferred until the comment is submitted, so images
+  // that are attached and then removed never create orphaned files.
+  const fileToAttachment = (file: File, name = file.name): Promise<Attachment> =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve({
+        id: Math.random().toString(36).substring(7),
+        name,
+        type: file.type.startsWith('image/') ? 'image' : 'file',
+        url: reader.result as string, // base64 data URL (local until submit)
+      });
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
       if (e.target.files && e.target.files.length > 0) {
-          const file = e.target.files[0];
-          
-          // Convert file to base64
-          const base64 = await new Promise<string>((resolve, reject) => {
-              const reader = new FileReader();
-              reader.onload = () => resolve(reader.result as string);
-              reader.onerror = reject;
-              reader.readAsDataURL(file); // This creates a base64 data URL
-          });
-          
-          const newAttachment: Attachment = {
-              id: Math.random().toString(36).substring(7),
-              name: file.name,
-              type: file.type.startsWith('image/') ? 'image' : 'file',
-              url: base64 // Store as base64 data URL instead of blob URL
-          };
-          setAttachments(prev => [...prev, newAttachment]);
+          const attachment = await fileToAttachment(e.target.files[0]);
+          setAttachments(prev => [...prev, attachment]);
       }
       if (fileInputRef.current) fileInputRef.current.value = '';
   }
 
   const handleReplyFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
       if (e.target.files && e.target.files.length > 0) {
-          const file = e.target.files[0];
-          
-          const base64 = await new Promise<string>((resolve, reject) => {
-              const reader = new FileReader();
-              reader.onload = () => resolve(reader.result as string);
-              reader.onerror = reject;
-              reader.readAsDataURL(file);
-          });
-          
-          const newAttachment: Attachment = {
-              id: Math.random().toString(36).substring(7),
-              name: file.name,
-              type: file.type.startsWith('image/') ? 'image' : 'file',
-              url: base64
-          };
-          setReplyAttachments(prev => [...prev, newAttachment]);
+          const attachment = await fileToAttachment(e.target.files[0]);
+          setReplyAttachments(prev => [...prev, attachment]);
       }
       if (replyFileInputRef.current) replyFileInputRef.current.value = '';
   }
@@ -215,21 +244,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
               const file = item.getAsFile();
               if (!file) continue;
 
-              // Convert pasted image to base64
-              const base64 = await new Promise<string>((resolve, reject) => {
-                  const reader = new FileReader();
-                  reader.onload = () => resolve(reader.result as string);
-                  reader.onerror = reject;
-                  reader.readAsDataURL(file);
-              });
-
-              const newAttachment: Attachment = {
-                  id: Math.random().toString(36).substring(7),
-                  name: `pasted-image-${Date.now()}.${file.type.split('/')[1] || 'png'}`,
-                  type: 'image',
-                  url: base64
-              };
-              setAttachments(prev => [...prev, newAttachment]);
+              const name = `pasted-image-${Date.now()}.${file.type.split('/')[1] || 'png'}`;
+              const attachment = await fileToAttachment(file, name);
+              setAttachments(prev => [...prev, attachment]);
               break; // Only handle the first image
           }
       }
@@ -322,7 +339,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           visibleAnnotations.map((ann) => {
             const isEditing = editingId === ann.id;
             const isReplying = replyingToId === ann.id;
-            const replies = annotations.filter(r => r.parentId === ann.id);
+            const replies = repliesByParent.get(ann.id) ?? [];
             const hasReplies = replies.length > 0;
             
             return (
@@ -557,10 +574,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     <button
                       type="button"
                       onClick={() => replyFileInputRef.current?.click()}
-                      className="absolute bottom-2 right-2 p-1 text-zinc-400 hover:text-zinc-600 dark:hover:text-white"
+                      disabled={isUploading}
+                      className="absolute bottom-2 right-2 p-1 text-zinc-400 hover:text-zinc-600 dark:hover:text-white disabled:opacity-50 disabled:cursor-not-allowed"
                       title="Attach file"
                     >
-                      <Paperclip className="w-3.5 h-3.5" />
+                      {isUploading ? <RotateCw className="w-3.5 h-3.5 animate-spin" /> : <Paperclip className="w-3.5 h-3.5" />}
                     </button>
                     <input 
                       type="file" 
@@ -570,12 +588,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       accept="image/*,.pdf,.doc,.docx" 
                     />
                   </div>
-                  <Button 
+                  <Button
                     onClick={() => handleReplySubmit(ann.id)}
-                    variant="primary" 
+                    variant="primary"
                     size="icon"
                     className="h-auto self-end"
-                    disabled={!replyText.trim() && replyAttachments.length === 0}
+                    disabled={isUploading || (!replyText.trim() && replyAttachments.length === 0)}
                   >
                     <Send className="w-3.5 h-3.5" />
                   </Button>
@@ -754,7 +772,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 {isDrawingMode ? 'Drawing' : (selectionRange ? 'Range Selected' : 'Current Frame')}
                 </span>
             </div>
-            {attachments.length > 0 && <span>{attachments.length} attached</span>}
+            {isUploading
+              ? <span className="flex items-center gap-1 text-purple-500"><RotateCw className="w-3 h-3 animate-spin" /> Uploading…</span>
+              : attachments.length > 0 && <span>{attachments.length} attached</span>}
           </div>
 
           {/* New Attachments Preview */}
@@ -801,10 +821,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 <button
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
-                    className="absolute bottom-2 right-2 p-1.5 text-zinc-400 hover:text-zinc-600 dark:hover:text-white bg-transparent hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded-md transition-colors"
+                    disabled={isUploading}
+                    className="absolute bottom-2 right-2 p-1.5 text-zinc-400 hover:text-zinc-600 dark:hover:text-white bg-transparent hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     title="Attach file"
                 >
-                    <Paperclip className="w-4 h-4" />
+                    {isUploading ? <RotateCw className="w-4 h-4 animate-spin" /> : <Paperclip className="w-4 h-4" />}
                 </button>
                 <input 
                     type="file" 
@@ -814,11 +835,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     accept="image/*,.pdf,.doc,.docx" 
                 />
             </div>
-            <Button 
-              type="submit" 
-              variant="primary" 
+            <Button
+              type="submit"
+              variant="primary"
               className="h-auto self-end mb-1"
-              disabled={!newComment.trim() && attachments.length === 0}
+              disabled={isUploading || (!newComment.trim() && attachments.length === 0)}
             >
               <Send className="w-4 h-4" />
             </Button>
@@ -855,3 +876,5 @@ export const Sidebar: React.FC<SidebarProps> = ({
     </div>
   );
 };
+
+export const Sidebar = React.memo(SidebarComponent);

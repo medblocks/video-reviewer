@@ -63,24 +63,21 @@ router.post('/', async (req, res) => {
     
     const id = uuidv4();
     const parentIdValue = parent_id || null;
-    
-    const result = await pool.query(
-      `INSERT INTO annotations (id, video_id, user_id, parent_id, start_time, end_time, text, type, drawing_data, attachments)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-       RETURNING *`,
+
+    // Insert and return the row joined with its author's name in a single round-trip.
+    const result = await pool.query<Annotation & { author_name: string }>(
+      `WITH inserted AS (
+         INSERT INTO annotations (id, video_id, user_id, parent_id, start_time, end_time, text, type, drawing_data, attachments)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         RETURNING *
+       )
+       SELECT a.*, u.name as author_name
+       FROM inserted a
+       JOIN users u ON a.user_id = u.id`,
       [id, video_id, user_id, parentIdValue, start_time, end_time, text || '', type, drawing_data || null, JSON.stringify(attachments || [])]
     );
-    
-    // Fetch with author info
-    const fullResult = await pool.query<Annotation & { author_name: string }>(
-      `SELECT a.*, u.name as author_name 
-       FROM annotations a 
-       JOIN users u ON a.user_id = u.id 
-       WHERE a.id = $1`,
-      [id]
-    );
-    
-    const row = fullResult.rows[0];
+
+    const row = result.rows[0];
     const response: AnnotationResponse = {
       id: row.id,
       video_id: row.video_id,
@@ -164,25 +161,22 @@ router.patch('/:id', async (req, res) => {
     }
     
     values.push(id);
-    const result = await pool.query(
-      `UPDATE annotations SET ${updates.join(', ')} WHERE id = $${paramIndex} RETURNING *`,
+    // Update and return the row joined with its author's name in a single round-trip.
+    const result = await pool.query<Annotation & { author_name: string }>(
+      `WITH updated AS (
+         UPDATE annotations SET ${updates.join(', ')} WHERE id = $${paramIndex} RETURNING *
+       )
+       SELECT a.*, u.name as author_name
+       FROM updated a
+       JOIN users u ON a.user_id = u.id`,
       values
     );
-    
+
     if (result.rowCount === 0) {
       return res.status(404).json({ error: 'Annotation not found' });
     }
-    
-    // Fetch with author info
-    const fullResult = await pool.query<Annotation & { author_name: string }>(
-      `SELECT a.*, u.name as author_name 
-       FROM annotations a 
-       JOIN users u ON a.user_id = u.id 
-       WHERE a.id = $1`,
-      [id]
-    );
-    
-    const row = fullResult.rows[0];
+
+    const row = result.rows[0];
     const response: AnnotationResponse = {
       id: row.id,
       video_id: row.video_id,
