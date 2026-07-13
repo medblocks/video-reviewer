@@ -16,8 +16,8 @@ type DragMode = 'none' | 'create' | 'extend-start' | 'extend-end';
 // Zoom levels: 1x, 2x, 4x, 8x, 16x
 const ZOOM_LEVELS = [1, 2, 4, 8, 16];
 
-export const Timeline: React.FC<TimelineProps> = ({ 
-  duration, 
+const TimelineComponent: React.FC<TimelineProps> = ({
+  duration,
   currentTime, 
   annotations,
   selectionRange,
@@ -349,6 +349,8 @@ export const Timeline: React.FC<TimelineProps> = ({
     </div>
   );
 };
+
+export const Timeline = React.memo(TimelineComponent);
 
 function useSelectionStyleZoomed(
     selectionRange: { start: number; end: number } | null,

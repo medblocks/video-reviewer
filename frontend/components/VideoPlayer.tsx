@@ -19,6 +19,7 @@ interface VideoPlayerProps {
   onTimeUpdate: (time: number) => void;
   onDurationChange: (duration: number) => void;
   togglePlay: () => void;
+  onError?: () => void;
 }
 
 export interface VideoPlayerRef {
@@ -38,7 +39,8 @@ export const VideoPlayer = forwardRef<VideoPlayerRef, VideoPlayerProps>(({
   playbackSpeed = 1,
   onTimeUpdate,
   onDurationChange,
-  togglePlay
+  togglePlay,
+  onError
 }, ref) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -224,6 +226,7 @@ export const VideoPlayer = forwardRef<VideoPlayerRef, VideoPlayerProps>(({
         className="max-w-full max-h-full"
         onTimeUpdate={() => videoRef.current && onTimeUpdate(videoRef.current.currentTime)}
         onLoadedMetadata={() => videoRef.current && onDurationChange(videoRef.current.duration)}
+        onError={() => onError?.()}
         onClick={togglePlay}
         crossOrigin="anonymous"
       >

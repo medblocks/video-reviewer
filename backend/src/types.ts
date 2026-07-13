@@ -4,6 +4,16 @@ export interface User {
   created_at?: string;
 }
 
+export interface DriveTokenRow {
+  user_id: string;
+  access_token: string;
+  refresh_token: string | null;
+  expiry_date: string | null; // BIGINT comes back as a string from pg
+  scope: string | null;
+  token_type: string | null;
+  updated_at?: string;
+}
+
 export interface Attachment {
   id: string;
   type: 'image' | 'file';
@@ -27,6 +37,7 @@ export interface Annotation {
   type: 'comment' | 'drawing';
   drawing_data?: DrawingData | null;
   attachments: Attachment[];
+  status: 'pending' | 'completed';
   created_at?: string;
   // Populated when joining with users table
   author?: User;
@@ -51,6 +62,7 @@ export interface ExportData {
     type: 'comment' | 'drawing';
     drawingData?: DrawingData | null;
     attachments: Attachment[];
+    status: 'pending' | 'completed';
     createdAt: string;
   }>;
 }

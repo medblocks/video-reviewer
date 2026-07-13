@@ -7,7 +7,7 @@ export interface User {
 export interface Attachment {
   id: string;
   type: 'image' | 'file';
-  url: string; // Base64 data URL (e.g., "data:image/png;base64,...")
+  url: string; // Hosted asset URL from Directus (e.g. "https://cms.example.com/assets/<id>"). Legacy rows may still hold a base64 data URL.
   name: string;
 }
 
@@ -29,6 +29,7 @@ export interface Annotation {
   type: 'comment' | 'drawing';
   drawingData?: DrawingPath;
   attachments: Attachment[];
+  status: 'pending' | 'completed';
 }
 
 export interface VideoMetadata {

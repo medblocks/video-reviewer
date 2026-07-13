@@ -36,13 +36,14 @@ router.get('/video/:videoId', async (req, res) => {
       type: row.type,
       drawing_data: row.drawing_data,
       attachments: row.attachments || [],
+      status: row.status,
       created_at: row.created_at,
       author: {
         id: row.user_id,
         name: row.author_name,
       }
     }));
-    
+
     res.json(annotations);
   } catch (error) {
     console.error('Error fetching annotations:', error);
@@ -62,24 +63,21 @@ router.post('/', async (req, res) => {
     
     const id = uuidv4();
     const parentIdValue = parent_id || null;
-    
-    const result = await pool.query(
-      `INSERT INTO annotations (id, video_id, user_id, parent_id, start_time, end_time, text, type, drawing_data, attachments)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-       RETURNING *`,
+
+    // Insert and return the row joined with its author's name in a single round-trip.
+    const result = await pool.query<Annotation & { author_name: string }>(
+      `WITH inserted AS (
+         INSERT INTO annotations (id, video_id, user_id, parent_id, start_time, end_time, text, type, drawing_data, attachments)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         RETURNING *
+       )
+       SELECT a.*, u.name as author_name
+       FROM inserted a
+       JOIN users u ON a.user_id = u.id`,
       [id, video_id, user_id, parentIdValue, start_time, end_time, text || '', type, drawing_data || null, JSON.stringify(attachments || [])]
     );
-    
-    // Fetch with author info
-    const fullResult = await pool.query<Annotation & { author_name: string }>(
-      `SELECT a.*, u.name as author_name 
-       FROM annotations a 
-       JOIN users u ON a.user_id = u.id 
-       WHERE a.id = $1`,
-      [id]
-    );
-    
-    const row = fullResult.rows[0];
+
+    const row = result.rows[0];
     const response: AnnotationResponse = {
       id: row.id,
       video_id: row.video_id,
@@ -90,13 +88,14 @@ router.post('/', async (req, res) => {
       type: row.type,
       drawing_data: row.drawing_data,
       attachments: row.attachments || [],
+      status: row.status,
       created_at: row.created_at,
       author: {
         id: row.user_id,
         name: row.author_name,
       }
     };
-    
+
     res.status(201).json(response);
   } catch (error: any) {
     console.error('❌ Error creating annotation:', error);
@@ -133,7 +132,7 @@ router.delete('/:id', async (req, res) => {
 router.patch('/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { start_time, end_time, text } = req.body;
+    const { start_time, end_time, text, status } = req.body;
     
     // Build dynamic update query
     const updates: string[] = [];
@@ -152,31 +151,32 @@ router.patch('/:id', async (req, res) => {
       updates.push(`text = $${paramIndex++}`);
       values.push(text);
     }
-    
+    if (status !== undefined) {
+      updates.push(`status = $${paramIndex++}`);
+      values.push(status);
+    }
+
     if (updates.length === 0) {
       return res.status(400).json({ error: 'No fields to update' });
     }
     
     values.push(id);
-    const result = await pool.query(
-      `UPDATE annotations SET ${updates.join(', ')} WHERE id = $${paramIndex} RETURNING *`,
+    // Update and return the row joined with its author's name in a single round-trip.
+    const result = await pool.query<Annotation & { author_name: string }>(
+      `WITH updated AS (
+         UPDATE annotations SET ${updates.join(', ')} WHERE id = $${paramIndex} RETURNING *
+       )
+       SELECT a.*, u.name as author_name
+       FROM updated a
+       JOIN users u ON a.user_id = u.id`,
       values
     );
-    
+
     if (result.rowCount === 0) {
       return res.status(404).json({ error: 'Annotation not found' });
     }
-    
-    // Fetch with author info
-    const fullResult = await pool.query<Annotation & { author_name: string }>(
-      `SELECT a.*, u.name as author_name 
-       FROM annotations a 
-       JOIN users u ON a.user_id = u.id 
-       WHERE a.id = $1`,
-      [id]
-    );
-    
-    const row = fullResult.rows[0];
+
+    const row = result.rows[0];
     const response: AnnotationResponse = {
       id: row.id,
       video_id: row.video_id,
@@ -187,13 +187,14 @@ router.patch('/:id', async (req, res) => {
       type: row.type,
       drawing_data: row.drawing_data,
       attachments: row.attachments || [],
+      status: row.status,
       created_at: row.created_at,
       author: {
         id: row.user_id,
         name: row.author_name,
       }
     };
-    
+
     res.json(response);
   } catch (error) {
     console.error('Error updating annotation:', error);
@@ -235,6 +236,7 @@ router.get('/export/:videoId', async (req, res) => {
           type: row.type,
           drawingData: row.drawing_data,
           attachments: row.attachments || [],
+          status: row.status,
           createdAt: row.created_at || new Date().toISOString(),
         };
       })

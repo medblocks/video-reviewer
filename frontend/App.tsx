@@ -5,6 +5,7 @@ import { Sidebar } from './components/Sidebar';
 import { Button } from './components/ui/Button';
 import { UserOnboardingModal } from './components/UserOnboardingModal';
 import { VisualSuggestionsModal } from './components/VisualSuggestionsModal';
+import { DriveLinkInput } from './components/DriveLinkInput';
 import { Annotation, Attachment, User, VisualSuggestion } from './types';
 import { 
   getAnnotations, 
@@ -18,6 +19,11 @@ import {
   importAnnotations,
   downloadExportAsFile,
   getVisualSuggestions,
+  getDriveStatus,
+  getDriveAuthUrl,
+  getDriveStreamUrl,
+  extractDriveFileId,
+  API_ORIGIN,
   ExportData
 } from './services/api';
 import { generateFastFileHash, generateFileHash } from './utils/hash';
@@ -58,7 +64,10 @@ export default function App() {
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
-  
+
+  // Google Drive State
+  const [isDriveConnected, setIsDriveConnected] = useState(false);
+
   // Transcript State
   const [transcriptCues, setTranscriptCues] = useState<TranscriptCue[]>([]);
   
@@ -199,16 +208,23 @@ export default function App() {
     initUser();
   }, []);
 
+  // Check Google Drive connection status once we have a user
+  useEffect(() => {
+    if (!currentUser) return;
+    getDriveStatus(currentUser.id).then(setIsDriveConnected);
+  }, [currentUser]);
+
+  // Re-fetch annotations for the current video (used on load and manual refresh)
+  const refreshAnnotations = useCallback(async () => {
+    if (!videoId) return;
+    const loaded = await getAnnotations(videoId);
+    setAnnotations(loaded);
+  }, [videoId]);
+
   // Load annotations when video loads (using content hash as ID)
   useEffect(() => {
-    if (videoId) {
-      const loadAnnotations = async () => {
-        const loaded = await getAnnotations(videoId);
-        setAnnotations(loaded);
-      };
-      loadAnnotations();
-    }
-  }, [videoId]);
+    refreshAnnotations();
+  }, [refreshAnnotations]);
 
   // Handle user creation from onboarding
   const handleUserCreate = async (name: string) => {
@@ -226,13 +242,13 @@ export default function App() {
   };
 
   // Handle Range Selection from Timeline
-  const handleRangeSelect = (range: { start: number; end: number } | null) => {
+  const handleRangeSelect = useCallback((range: { start: number; end: number } | null) => {
       setSelectionRange(range);
       if (range) {
           setIsPlaying(false);
           setActiveAnnotationId(null); // Deselect specific comment if creating a new range
       }
-  };
+  }, []);
 
   const handleTimeUpdate = useCallback((time: number) => {
     setCurrentTime(time);
@@ -242,29 +258,29 @@ export default function App() {
     setIsPlaying(!isPlaying);
   };
 
-  const handleSeek = (time: number) => {
+  const handleSeek = useCallback((time: number) => {
     videoPlayerRef.current?.seekTo(time);
     setCurrentTime(time);
-  };
+  }, []);
 
-  const handleToolChange = (tool: 'pointer' | 'pen') => {
+  const handleToolChange = useCallback((tool: 'pointer' | 'pen') => {
     setSelectedTool(tool);
     if (tool === 'pen') {
       setIsDrawingMode(true);
-      setIsPlaying(false); 
+      setIsPlaying(false);
       // Clear existing active drawing if we want to draw new stuff
-      setActiveAnnotationId(null); 
+      setActiveAnnotationId(null);
       videoPlayerRef.current?.clearCanvas();
     } else {
       setIsDrawingMode(false);
     }
-  };
+  }, []);
 
   const clearCurrentDrawing = () => {
       videoPlayerRef.current?.clearCanvas();
   }
 
-  const handleAddComment = async (text: string, attachments: Attachment[], parentId?: string) => {
+  const handleAddComment = useCallback(async (text: string, attachments: Attachment[], parentId?: string) => {
     if (!videoId || !currentUser) return;
 
     // Get Drawing Data from Fabric via Ref
@@ -302,7 +318,8 @@ export default function App() {
         text: text,
         type: currentDrawing ? 'drawing' : 'comment',
         drawingData: currentDrawing || undefined,
-        attachments: attachments
+        attachments: attachments,
+        status: 'pending'
       });
 
       setAnnotations(prev => [...prev, newAnnotation].sort((a, b) => a.startTime - b.startTime));
@@ -326,7 +343,7 @@ export default function App() {
       console.error('Failed to save annotation:', error);
       alert('Failed to save annotation. Please make sure the server is running.');
     }
-  };
+  }, [videoId, currentUser, currentTime, selectionRange, duration, annotations, selectedTool, handleToolChange]);
 
   // Export annotations as JSON
   const handleExport = async () => {
@@ -378,27 +395,27 @@ export default function App() {
     }
   };
 
-  const handleAnnotationSelect = (ann: Annotation) => {
+  const handleAnnotationSelect = useCallback((ann: Annotation) => {
     setActiveAnnotationId(ann.id);
     setIsPlaying(false);
     videoPlayerRef.current?.seekTo(ann.startTime);
     setCurrentTime(ann.startTime);
     setSelectionRange({ start: ann.startTime, end: ann.endTime });
-    
+
     // If in drawing mode, exit it to view the annotation
     if (isDrawingMode) {
         setSelectedTool('pointer');
         setIsDrawingMode(false);
     }
-  };
+  }, [isDrawingMode]);
 
-  const handleUpdateAnnotation = async (id: string, updates: { startTime?: number; endTime?: number; text?: string }) => {
+  const handleUpdateAnnotation = useCallback(async (id: string, updates: { startTime?: number; endTime?: number; text?: string; status?: 'pending' | 'completed' }) => {
     try {
       const updated = await updateAnnotation(id, updates);
-      
+
       // Update the annotations list
       setAnnotations(prev => prev.map(ann => ann.id === id ? updated : ann).sort((a, b) => a.startTime - b.startTime));
-      
+
       // Update selection range if this annotation is active
       if (activeAnnotationId === id && updates.startTime !== undefined && updates.endTime !== undefined) {
         setSelectionRange({ start: updates.startTime, end: updates.endTime });
@@ -407,15 +424,15 @@ export default function App() {
       console.error('Failed to update annotation:', error);
       alert('Failed to update annotation. Please make sure the server is running.');
     }
-  };
+  }, [activeAnnotationId]);
 
-  const handleDeleteAnnotation = async (id: string) => {
+  const handleDeleteAnnotation = useCallback(async (id: string) => {
     try {
       await deleteAnnotation(id);
-      
+
       // Remove the annotation and any replies from the list
       setAnnotations(prev => prev.filter(ann => ann.id !== id && ann.parentId !== id));
-      
+
       // Clear active annotation if it was deleted
       if (activeAnnotationId === id) {
         setActiveAnnotationId(null);
@@ -425,7 +442,7 @@ export default function App() {
       console.error('Failed to delete annotation:', error);
       alert('Failed to delete annotation. Please make sure the server is running.');
     }
-  };
+  }, [activeAnnotationId]);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -441,6 +458,104 @@ export default function App() {
       setIsPlaying(false);
       setCurrentTime(0);
       setSelectionRange(null);
+    }
+  };
+
+  // Open the Google Drive OAuth popup and resolve once it reports success.
+  const connectDrive = (): Promise<void> => {
+    if (!currentUser) return Promise.reject(new Error('No user'));
+
+    return new Promise((resolve, reject) => {
+      const popup = window.open(
+        getDriveAuthUrl(currentUser.id),
+        'drive_oauth',
+        'width=500,height=650'
+      );
+
+      if (!popup) {
+        reject(new Error('Popup blocked'));
+        return;
+      }
+
+      const handleMessage = (event: MessageEvent) => {
+        if (event.origin !== API_ORIGIN) return;
+        if (event.data?.type === 'drive-connected') {
+          cleanup();
+          setIsDriveConnected(true);
+          resolve();
+        } else if (event.data?.type === 'drive-error') {
+          cleanup();
+          reject(new Error(event.data?.message || 'Drive connection failed'));
+        }
+      };
+
+      // Detect the user closing the popup without completing consent.
+      const pollClosed = window.setInterval(() => {
+        if (popup.closed) {
+          cleanup();
+          reject(new Error('Popup closed before connecting'));
+        }
+      }, 500);
+
+      const cleanup = () => {
+        window.removeEventListener('message', handleMessage);
+        window.clearInterval(pollClosed);
+      };
+
+      window.addEventListener('message', handleMessage);
+    });
+  };
+
+  // Load a video from a pasted Google Drive share link.
+  const handleLoadDriveLink = async (rawUrl: string) => {
+    const fileId = extractDriveFileId(rawUrl);
+    if (!fileId) {
+      alert('Could not parse a Google Drive file link. Please paste a valid share link.');
+      return;
+    }
+
+    if (!currentUser) return;
+
+    // Connect Drive first if we haven't already.
+    if (!isDriveConnected) {
+      try {
+        await connectDrive();
+      } catch (error) {
+        console.error('Drive connection failed:', error);
+        alert('Could not connect to Google Drive. Please try again.');
+        return;
+      }
+    }
+
+    // Mirror handleFileUpload's reset, using the streaming proxy as the source
+    // and the Drive file ID as the video identity.
+    setVideoSrc(getDriveStreamUrl(fileId, currentUser.id));
+    setVideoId(fileId);
+    setSubtitleSrc(null);
+    setAnnotations([]);
+    setIsPlaying(false);
+    setCurrentTime(0);
+    setSelectionRange(null);
+  };
+
+  // Surface a token-revoked stream error and offer to reconnect.
+  const handleVideoError = async () => {
+    if (!videoId || !videoSrc) return;
+    // Only Drive-sourced videos go through the backend stream endpoint.
+    if (!videoSrc.includes('/drive/stream/')) return;
+
+    setIsDriveConnected(false);
+    const reconnect = window.confirm(
+      'Could not load this Google Drive video. Your Drive connection may have expired. Reconnect?'
+    );
+    if (!reconnect || !currentUser) return;
+
+    try {
+      await connectDrive();
+      // Force the <video> to re-request with a fresh token.
+      setVideoSrc(getDriveStreamUrl(videoId, currentUser.id) + `&t=${Date.now()}`);
+    } catch (error) {
+      console.error('Drive reconnection failed:', error);
     }
   };
 
@@ -726,6 +841,7 @@ export default function App() {
                     onTimeUpdate={handleTimeUpdate}
                     onDurationChange={setDuration}
                     togglePlay={togglePlay}
+                    onError={handleVideoError}
                  />
               </div>
 
@@ -780,13 +896,21 @@ export default function App() {
                </div>
                <h2 className="text-xl font-medium text-zinc-700 dark:text-zinc-300 mb-2">No Video Loaded</h2>
                <p className="text-sm max-w-xs text-center mb-8 text-zinc-500">
-                 Upload a video file to start annotating, reviewing, and collaborating with your team.
+                 Upload a video file or load one from Google Drive to start annotating, reviewing, and collaborating with your team.
                </p>
                <label className="cursor-pointer bg-purple-600 hover:bg-purple-700 text-white px-6 py-3 rounded-full text-sm font-medium transition-all shadow-lg shadow-purple-900/20 hover:scale-105 active:scale-95 flex items-center gap-2">
                   <Upload className="w-4 h-4" />
                   Select Video File
                   <input type="file" accept="video/*" className="hidden" onChange={handleFileUpload} />
               </label>
+
+              <div className="flex items-center gap-3 my-6 w-full max-w-md">
+                 <div className="flex-1 h-px bg-zinc-200 dark:bg-zinc-800" />
+                 <span className="text-xs uppercase tracking-widest text-zinc-400 dark:text-zinc-600">or</span>
+                 <div className="flex-1 h-px bg-zinc-200 dark:bg-zinc-800" />
+              </div>
+
+              <DriveLinkInput isConnected={isDriveConnected} onLoad={handleLoadDriveLink} />
             </div>
           )}
         </div>
@@ -802,6 +926,7 @@ export default function App() {
             onAddComment={handleAddComment}
             onUpdateAnnotation={handleUpdateAnnotation}
             onDeleteAnnotation={handleDeleteAnnotation}
+            onRefresh={refreshAnnotations}
             activeAnnotationId={activeAnnotationId || undefined}
             isDrawingMode={isDrawingMode}
           />
