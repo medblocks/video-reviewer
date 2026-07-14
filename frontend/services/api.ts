@@ -194,18 +194,33 @@ export async function clearAnnotations(videoId: string): Promise<void> {
 // Upload one base64 attachment to Directus (via the backend proxy) and get back
 // an Attachment whose `url` points at the hosted asset. The base64 is only sent
 // at comment-submit time, so pasted-then-removed images never reach Directus.
+const UPLOAD_TIMEOUT_MS = 60_000;
+
 export async function uploadAttachment(attachment: Attachment): Promise<Attachment> {
-  const response = await fetch(`${API_BASE}/upload`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ dataUrl: attachment.url, name: attachment.name }),
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), UPLOAD_TIMEOUT_MS);
 
-  if (!response.ok) {
-    throw new Error('Failed to upload attachment');
+  try {
+    const response = await fetch(`${API_BASE}/upload`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dataUrl: attachment.url, name: attachment.name }),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to upload attachment');
+    }
+
+    return await response.json();
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new Error('Upload timed out — the image may be too large or the connection is slow.');
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
   }
-
-  return await response.json();
 }
 
 // Upload any still-local (base64 `data:`) attachments to Directus, passing

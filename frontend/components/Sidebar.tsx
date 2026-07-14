@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Annotation, User, Attachment } from '../types';
 import { uploadPendingAttachments } from '../services/api';
+import { compressImage } from '../utils/image';
 import { Button } from './ui/Button';
 import { MessageSquare, Clock, PenTool, Send, Paperclip, X, File, Image as ImageIcon, Edit2, Save, Trash2, Reply, ZoomIn, RotateCw, CheckCircle2, Circle } from 'lucide-react';
 
@@ -163,7 +164,7 @@ const SidebarComponent: React.FC<SidebarProps> = ({
       textareaRef.current?.blur();
     } catch (error) {
       console.error('Failed to upload attachments:', error);
-      alert('Failed to upload attachments. Please try again.');
+      alert(error instanceof Error ? error.message : 'Failed to upload attachments. Please try again.');
     } finally {
       setIsUploading(false);
     }
@@ -181,7 +182,7 @@ const SidebarComponent: React.FC<SidebarProps> = ({
       setReplyingToId(null);
     } catch (error) {
       console.error('Failed to upload attachments:', error);
-      alert('Failed to upload attachments. Please try again.');
+      alert(error instanceof Error ? error.message : 'Failed to upload attachments. Please try again.');
       return;
     } finally {
       setIsUploading(false);
@@ -198,21 +199,13 @@ const SidebarComponent: React.FC<SidebarProps> = ({
     }
   };
 
-  // Turn a File into a local Attachment holding a base64 data URL. The actual
-  // upload to Directus is deferred until the comment is submitted, so images
-  // that are attached and then removed never create orphaned files.
+  // Turn a File into a local Attachment holding a base64 data URL. Images are
+  // downscaled/compressed first so the deferred upload carries a few hundred KB
+  // instead of several MB (large pastes were timing out in production). The
+  // actual upload to Directus is deferred until the comment is submitted, so
+  // images that are attached and then removed never create orphaned files.
   const fileToAttachment = (file: File, name = file.name): Promise<Attachment> =>
-    new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve({
-        id: Math.random().toString(36).substring(7),
-        name,
-        type: file.type.startsWith('image/') ? 'image' : 'file',
-        url: reader.result as string, // base64 data URL (local until submit)
-      });
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
-    });
+    compressImage(file, name);
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
       if (e.target.files && e.target.files.length > 0) {
