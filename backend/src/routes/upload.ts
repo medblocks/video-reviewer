@@ -44,11 +44,21 @@ router.post('/', async (req, res) => {
     form.append('folder', process.env.DIRECTUS_UPLOAD_FOLDER!);
     form.append('file', new Blob([new Uint8Array(buffer)], { type: mimetype }), filename);
 
-    const directusRes = await fetch(`${directusUrl}/files`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${process.env.DIRECTUS_TOKEN}` },
-      body: form,
-    });
+    let directusRes: Response;
+    try {
+      directusRes = await fetch(`${directusUrl}/files`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${process.env.DIRECTUS_TOKEN}` },
+        body: form,
+        signal: AbortSignal.timeout(30000),
+      });
+    } catch (err: any) {
+      if (err?.name === 'TimeoutError' || err?.name === 'AbortError') {
+        console.error('❌ Directus upload timed out');
+        return res.status(504).json({ error: 'Upload to storage timed out. Please try again.' });
+      }
+      throw err;
+    }
 
     if (!directusRes.ok) {
       const body = await directusRes.text();
